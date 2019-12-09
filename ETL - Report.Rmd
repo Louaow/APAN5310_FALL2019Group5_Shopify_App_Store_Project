@@ -1,0 +1,350 @@
+---
+title: "G5-ETL"
+author: "Yufan Luo;Yilun Feng"
+date: "12/3/2019"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Connection
+
+```{r}
+require('RPostgreSQL')
+drv<-dbDriver('PostgreSQL')
+con<-dbConnect(drv,dbname='shopify_appstore',host='f19server.apan5310.com',port=50205,user='postgres',password='3utmhnzw')
+```
+
+## Table 1:apps
+First, we will work with "apps" table. After uploading the dataset, we can extract useful columns and rename the columns. Since all apps in the dataset are unique, we can use the original “id” column.
+
+```{r}
+#upload the dataset
+apps_data<-read.csv('/Users/lou/Desktop/apps.csv',stringsAsFactors=F)
+
+#extract useful columns and rename the columns
+apps<-apps_data[,c('id','title','url','tagline','icon','pricing_hint')]
+names(apps)<-c('app_id','app_title','url','tagline','icon','pricing_hint')
+
+#check duplication:no duplication
+apps[duplicated(apps[c('url')]),]
+```
+
+```{r}
+#write table
+dbWriteTable(con,name='apps',value=apps,row.names=FALSE,append=TRUE)
+```
+
+## Table 2: benefits
+Next, we will work with “benefits” table. We first upload the dataset and rename the columns to avoid confusion, and we check duplications.
+
+```{r}
+#upload the dataset
+benefits_data<-read.csv('/Users/lou/Desktop/key_benefits.csv',stringsAsFactors=F)
+
+#rename the columns
+names(benefits_data)<-c('app_id','benefit_title','benefit_description')
+
+#check duplication:each app may have several benefits
+benefits_data[duplicated(benefits_data['app_id']),]
+
+#check duplication:different apps may have same benefits
+benefits_data[duplicated(benefits_data[c('benefit_title','benefit_description')]),]
+```
+
+After checking duplication, we will confirm that each app may have several benefits, and different apps may have the same benefits. Therefore, we cannot simply add a column with incrementing integer numbers for the primary key of benefits as this would lead to benefits with multiple primary keys. We will use “unique” function to solve this problem and add “benefit_id” afterwards.
+
+```{r}
+#unique
+benefits_unique<-unique(benefits_data[,c('benefit_title','benefit_description')])
+
+#add benefit_id
+benefits_unique$benefit_id<-1:nrow(benefits_unique)
+
+#write table
+dbWriteTable(con,name='benefits',value=benefits_unique[,c('benefit_id','benefit_title','benefit_description')],row.names=FALSE,append=TRUE)
+```
+
+## Table 3: apps and benefits
+Next, we will work with “apps_and_benefits” table. We can map “benefit_id” and “app_id” using “merge” function by “benefit_title” and “benefit_description”.
+
+```{r}
+#mapping benefit_id and app_id
+benefits_data<-merge(benefits_data,benefits_unique[,c('benefit_id','benefit_title','benefit_description')],by=c('benefit_title','benefit_description'))
+
+#write table
+dbWriteTable(con,name='apps_and_benefits',value=benefits_data[,c('app_id','benefit_id')],row.names=FALSE,append=TRUE)
+```
+
+## Table 4: categories
+The dataset is clean and structured, so we only need to rename the columns.
+
+```{r}
+#upload dataset
+categories_data<-read.csv('/Users/lou/Desktop/categories.csv',stringsAsFactors=F)
+
+#renmae columns
+names(categories_data)<-c('category_id','category_title')
+
+#write table
+dbWriteTable(con,name='categories',value=categories_data,row.names=FALSE,append=TRUE)
+```
+
+## Table 5: apps and categories
+The dataset is clean and structured, so we can use it directly.
+
+```{r}
+#upload dataset
+apps_and_categories_data<-read.csv('/Users/lou/Desktop/apps_categories.csv',stringsAsFactors=F)
+
+#write table
+dbWriteTable(con,name='apps_and_categories',value=apps_and_categories_data,row.names=FALSE,append=TRUE)
+```
+
+## Table 6: descriptions
+First, we rename the columns. Then we will check duplication and find no duplication in this case. 
+
+```{r}
+#upload dataset
+descriptions_data<-apps_data[,c('id','description','description_raw')]
+
+#rename
+names(descriptions_data)<-c('app_id','description','description_raw') 
+
+#check duplication:no duplication
+descriptions_data[duplicated(descriptions_data['description']),]
+```
+
+Thus, we can add “description_id” by adding incremental integers and write table.
+
+```{r}
+#add description_id
+descriptions_data$description_id<-1:nrow(descriptions_data)
+
+#write table
+dbWriteTable(con,name='descriptions',value=descriptions_data[,c('description_id','description','description_raw')],row.names=FALSE,append=TRUE)
+```
+
+## Table 7: apps and descriptions
+For this table, we can directly extract “app_id” and “description_id”.
+
+```{r}
+#apps_and_descriptions dataset
+apps_and_descriptions<-descriptions_data[,c('app_id','description_id')]
+
+#write table
+dbWriteTable(con,name='apps_and_descriptions',value=apps_and_descriptions,row.names=FALSE,append=TRUE)
+```
+
+## Table 8: developers
+First, we extract necessary columns from the original dataset and then we check duplication.
+
+```{r}
+#upload dataset
+developers_data<-apps_data[,c('developer','developer_link')]
+
+#check duplication:some apps may have the same developers
+developers_data[duplicated(developers_data[c('developer','developer_link')]),]
+```
+
+After checking duplications, we find some apps may have the same developers. Therefore, we can use “unique” function to remove duplicated developers information, and add new “developer_id” afterwards.
+
+```{r}
+#unique
+developers_data<-unique(developers_data)
+
+#add developer_id
+developers_data$developer_id<-1:nrow(developers_data)
+
+#write table
+dbWriteTable(con,name='developers',value=developers_data,row.names=FALSE,append=TRUE)
+```
+
+## Table 9: apps and developers
+First we extract useful columns from original dataset, then we can use “merge” function to map developer_id into the dataset, last, we reanme the columns to avoid confusion and write table.
+
+```{r}
+#extract useful columns
+apps_and_developers<-apps_data[,c('id','developer','developer_link')]
+
+#map developer_id into the dataset
+apps_and_developers<-merge(apps_and_developers,developers_data[,c('developer_id','developer','developer_link')],by=c('developer','developer_link'))
+
+#rename the columns
+names(apps_and_developers)<-c('developer','developer_link','app_id','developer_id')
+
+#write table
+dbWriteTable(con,name='apps_and_developers',value=apps_and_developers[,c('app_id','developer_id')],row.names=FALSE,append=TRUE)
+```
+
+## Table 10: pricing_features
+First we extracted the feature column from pricing_plan_features.csv, and used the "unique" function to remove the duplicate information, and then assigned a pricing_feature_id for each row and wrote the table.
+
+```{r}
+# load data
+pricing_plan_feature_data = read.csv('/Users/lou/Desktop/pricing_plan_features.csv',stringsAsFactors=F)
+
+# extract the column and use "unique" function
+features_data = data.frame('feature' = unique(pricing_plan_feature_data$feature))
+
+# assign an id for each row
+features_data$pricing_feature_id = 1:nrow(features_data)
+
+# write table
+dbWriteTable(con,name='pricing_features',value=features_data,row.names=FALSE,append=TRUE)
+```
+
+## table 11: apps_and_pricing_features
+We mapped the pricing_feature_id to the pricing_plan_reature_data table, extracted app_id and pricing_feature_id, checked the uniqueness of each row abd wrote the table.
+
+```{r}
+# map id
+pricing_feature_id_list = sapply(pricing_plan_feature_data$feature, function(x) features_data$pricing_feature_id[features_data$feature == x])
+pricing_plan_feature_data$pricing_feature_id = pricing_feature_id_list
+
+# extract columns
+apps_and_pricing_features_data = pricing_plan_feature_data[c('app_id','pricing_feature_id')]
+
+# check uniqueness
+apps_and_pricing_features_data = unique(apps_and_pricing_features_data)
+
+# write table
+dbWriteTable(con,name='apps_and_pricing_features',value=apps_and_pricing_features_data,row.names=FALSE,append=TRUE)
+```
+
+## table 12: pricing_plans
+We renamed the column to avoid thge confusion, removed the duplicate information using unique function, assigned a pricing_plan_id to each row, and wrote the table.
+
+```{r}
+# load data
+pricing_plans_data = read.csv('/Users/lou/Desktop/pricing_plans.csv',stringsAsFactors=F)
+
+# rename the data
+names(pricing_plans_data)<-c('pricing_plan_id_original','app_id','title','price_plan')
+
+# ensure the uniqueness
+pricing_plans_unique = unique(pricing_plans_data[c('price_plan', 'title')])
+pricing_plans_unique$pricing_plan_id<-1:nrow(pricing_plans_unique)
+
+# write the table
+dbWriteTable(con,name='pricing_plans',value=pricing_plans_unique,row.names=FALSE,append=TRUE)
+```
+
+## table 13:apps_and_pricing_plans
+We used the merge function to map the pricing_plan_id, extracted app_id and pricing_plan_id, and wrote the table
+```{r}
+# map id
+apps_and_pricing_features_data = merge(pricing_plans_data,pricing_plans_unique,by=c('price_plan','title'))
+
+# extract columns
+apps_and_pricing_plans_data = apps_and_pricing_features_data[c('app_id', 'pricing_plan_id')]
+# write the table
+dbWriteTable(con,name='apps_and_pricing_plans',value=apps_and_pricing_plans_data,row.names=FALSE,append=TRUE)
+```
+
+## table 14: pricing_plans_and_pricing_features
+We mapped the feature_id and pricing_plan_id using merge function, extracted these two columns, selected unique rows and wrote the table
+
+```{r}
+# map feature_id
+plans_and_features<-merge(pricing_plan_feature_data,features_data,by='feature')
+
+# rename column 'pricing_plan_id' to 'pricing_plan_id_original' to avoid confusion
+names(plans_and_features)<-c('feature','pricing_plan_id_original','app_id','pricing_feature_id')
+
+# map new pricing_plan_id: step 1: by 'pricing_plan_id_original'
+plans_and_features<-merge(plans_and_features,pricing_plans_data,by='pricing_plan_id_original')
+
+# map new pricing_plan_id: step 2: add 'pricing_plan_id'
+plans_and_features<-merge(plans_and_features,pricing_plans_unique,by=c('price_plan','title'))
+
+# select useful columns and unique the combination
+pricing_plans_and_pricing_features_data = unique(plans_and_features[c('pricing_plan_id', 'pricing_feature_id')])
+
+# write the table
+dbWriteTable(con,name='pricing_plans_and_pricing_features',value=pricing_plans_and_pricing_features_data,row.names=FALSE,append=TRUE)
+```
+
+## table 15: reviews
+First renamed the columns to aviod the confusion. Next, we used the lubridate package to change the datetime from Month-Date, Year (e.g., December 08, 2018) to mmddyyyy to meet the requirement of postgresql. Then, we extracted useful columns, ensured the uniquness of each row, assigned ids to each row and wrote the table.
+```{r}
+# load the package and data
+library(lubridate)
+reviews_data = read.csv('/Users/lou/Desktop/reviews.csv', stringsAsFactors = F)
+
+# rename the columns to aviod the confusion
+colnames(reviews_data) = c("app_id", "author", "body", "rating", "helpful_counts", "posted_at", "developer_reply", "developer_reply_posted_at")
+
+# change the datetime format
+reviews_data$posted_at = mdy(reviews_data$posted_at)
+reviews_data$developer_reply_posted_at = mdy(reviews_data$developer_reply_posted_at)
+
+# extract useful data
+reviews = reviews_data[c("author", "body", "rating", "posted_at", "helpful_counts")]
+
+# ensure the uniqueness
+reviews_unique = unique(reviews)
+
+# assign ids
+reviews_unique$review_id = 1:nrow(reviews_unique)
+# write the table
+dbWriteTable(con,name='reviews',value=reviews_unique,row.names=FALSE,append=TRUE)
+```
+
+## table 16: apps_and_reviews
+We mapped the review_id using merge function, extracted app_id and review_id, ensured the uniqueness of each row and wrote the table
+
+```{r}
+reviews_data = merge(reviews_data,reviews_unique,by=c("author", "body", "rating", "posted_at", "helpful_counts"))
+apps_and_reviews = reviews_data[c("app_id", "review_id")]
+apps_and_reviews = unique(apps_and_reviews)
+##write table
+dbWriteTable(con,name='apps_and_reviews',value=apps_and_reviews,row.names=FALSE,append=TRUE)
+```
+
+## table 17: developer_replies
+We extracted developer_reply and developer_reply_posted_at columns, removed the duplicate rows, assigned developer_reply_id to each row, and wrote the table
+
+```{r}
+# extract useful columns
+developer_replies_data = reviews_data[c("developer_reply", "developer_reply_posted_at")]
+
+# ensure the uniqueness
+developer_replies_unique = unique(developer_replies_data)
+
+# assign ids
+developer_replies_unique$developer_reply_id = 1:nrow(developer_replies_unique)
+
+# write the table
+dbWriteTable(con,name='developer_replies',value=developer_replies_unique,row.names=FALSE,append=TRUE)
+
+```
+
+## table 18: reviews_and_developer_replies
+We mapped the developer_reply_id and review_id using merge function, extracted these two columns,
+
+```{r}
+# map id
+developer_replies_data = merge(reviews_data,developer_replies_unique,by=c("developer_reply", "developer_reply_posted_at"))
+
+# extract useful columns
+reviews_and_developer_replies = developer_replies_data[c("review_id", "developer_reply_id")]
+
+# ensure uniqueness
+reviews_and_developer_replies = unique(reviews_and_developer_replies)
+
+# write the table
+dbWriteTable(con,name='reviews_and_developer_replies',value=reviews_and_developer_replies,row.names=FALSE,append=TRUE)
+```
+
+## disconnection
+```{r}
+dbDisconnect(con)
+dbUnloadDriver(drv)
+```
+
